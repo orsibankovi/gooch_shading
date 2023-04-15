@@ -15,10 +15,9 @@ uniform struct{
 uniform struct {
   vec4 position;
   vec3 powerDensity;
-} lights[8];
+} lights[1];
 
 uniform struct{
-  samplerCube environment;
     vec3 light_position;
     vec3 light_color;
     vec3 warm_color;
@@ -26,25 +25,18 @@ uniform struct{
     float surface_brightness;
     float warm_factor;
     float cool_factor;
-    float edge_threshold;
-    float edge_intensity;
 } material;
 
 vec3 gooch_shading(vec3 N, vec3 L, vec3 V, vec3 H){
-    // diffuse lighting
+    float edge_threshold = 0.5f;
+    float edge_intensity = 0.1f;
     float diffuse = max(dot(N, L), 0.0);
     vec3 diffuse_color = mix(material.cool_color, material.warm_color, diffuse * material.warm_factor + diffuse * material.cool_factor);
 
-    // ambient lighting
-    float ambient = 0.5 + 0.5 * dot(N, vec3(0, 1, 0));
-    vec3 ambient_color = mix(material.cool_color, material.warm_color, ambient * material.warm_factor + ambient * material.cool_factor);
+    vec3 final_color = material.surface_brightness * diffuse_color * material.light_color * material.light_position;
 
-    // combine lighting and surface brightness
-    vec3 final_color = material.surface_brightness * (diffuse_color * material.light_color  + ambient_color * 0.5) * material.light_position;
-
-    // edge detection and highlighting
-    float edge = 1.0 - smoothstep(material.edge_threshold, material.edge_threshold + 0.01, length(dFdx(material.light_position)) + length(dFdy(material.light_position)));
-    final_color = mix(final_color, vec3(1.0), edge * material.edge_intensity);
+    float edge = 1.0 - smoothstep(edge_threshold, edge_threshold, length(dFdx(material.light_position)) + length(dFdy(material.light_position)));
+    final_color = mix(final_color, vec3(1.0), edge * edge_intensity);
 
     return final_color;
 }

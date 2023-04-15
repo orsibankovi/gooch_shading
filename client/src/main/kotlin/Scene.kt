@@ -37,6 +37,10 @@ class Scene (
 
   val programs = HashMap<String, Program>()
 
+  val maxLayers = 6 // Set the maximum number of layers for depth peeling
+
+  val frameBufferCube = FramebufferCube(gl, maxLayers, 512)
+
   fun makeMaterial(name : String) : Pair<String, Material>{
     val program = programs.getOrPut(name){
       val fs = Shader(gl, GL.FRAGMENT_SHADER, "${name}-fs.glsl")
@@ -47,16 +51,16 @@ class Scene (
       uniforms.forEach{ (name, uniform) ->
         if(uniform is UniformFloat){
           when(name){
-            "kr" -> uniform.set(Random.nextFloat() * 0.33f, Random.nextFloat()* 0.33f, Random.nextFloat(), Random.nextFloat())
+            "kr" -> uniform.set(0.45f, 0.55f, 0.4f)
             "light_position" -> uniform.set(0.5f, 0.5f, 0.8f)
-            "light_color" -> uniform.set(0.8f, 0.4f, 0.4f)
-            "warm_color" -> uniform.set(1.0f, 0.8f, 0.6f)
+            "light_color" -> uniform.set(0.7f, 2.0f, 4.0f)
+            "warm_color" -> uniform.set(1.0f, 0.5f, 0.7f)
             "cool_color" -> uniform.set(0.6f, 0.8f, 1.0f)
             "surface_brightness" -> uniform.set(0.5f)
             "warm_factor" -> uniform.set(5.0f)
             "cool_factor" -> uniform.set(5.5f)
-            "edge_threshold" -> uniform.set(Random.nextFloat())
-            "edge_intensity" -> uniform.set(0.1f)
+            "maxLayer"-> uniform.set(maxLayers)
+            "layer"-> uniform.set(0)
             else -> {
               uniform.set(Random.nextFloat() * 1f, Random.nextFloat() * 1f, Random.nextFloat() * 1f, Random.nextFloat() * 1f)
             }
@@ -69,6 +73,7 @@ class Scene (
 
   val materials = arrayOf(
     makeMaterial("envmapped"),
+    makeMaterial("depthPeeling"),
     makeMaterial("gooch")
   )
 
@@ -87,20 +92,15 @@ class Scene (
             -10f,
             sin(phi) * radius
           )
-          //  move = object : GameObject.Motion(this){
-          //    override operator fun invoke(
-          //      dt : Float,
-          //      t : Float,
-          //      keysPressed : Set<String>,
-          //      interactors : ArrayList<GameObject>,
-          //      spawn : ArrayList<GameObject>
-          //      ) : Boolean {
-          //      yaw += dt
-          //      return true
-          //    }
-          //  }
         }
     }
+  }
+
+
+  val lights = Array<Light>(1) { Light(it) }
+  init{
+    lights[0].position.set(1.0f, 1.0f, 1.0f, 0.0f).normalize()
+    lights[0].powerDensity.set(5.0f, 5.0f, 5.0f)
   }
 
   val camera = PerspectiveCamera()
@@ -112,10 +112,18 @@ class Scene (
     gl.enable(GL.DEPTH_TEST)
   }
 
+  lateinit var defaultFramebuffer : DefaultFramebuffer
+  lateinit var framebuffers : Array<Framebuffer>
 
   fun resize(gl : WebGL2RenderingContext, canvas : HTMLCanvasElement) {
     gl.viewport(0, 0, canvas.width, canvas.height)
     camera.setAspectRatio(canvas.width.toFloat() / canvas.height.toFloat())
+
+    defaultFramebuffer = DefaultFramebuffer(canvas.width, canvas.height)
+    framebuffers = arrayOf(
+      Framebuffer(gl, 6, canvas.width, canvas.height, GL.RGBA32F, GL.RGBA, GL.FLOAT),
+      Framebuffer(gl, 6, canvas.width, canvas.height, GL.RGBA32F, GL.RGBA, GL.FLOAT)
+    )
   }
 
   @Suppress("UNUSED_PARAMETER")
@@ -132,6 +140,27 @@ class Scene (
     gl.clearColor(0.3f, 0.0f, 0.3f, 1.0f)
     gl.clearDepth(1.0f)
     gl.clear(GL.COLOR_BUFFER_BIT or GL.DEPTH_BUFFER_BIT)
+
+    for (layer in 0 until maxLayers) {
+      uniforms["layer"]?.set(layer)
+      if (layer==0) {
+        uniforms["prevDepthTexture"]?.set(frameBufferCube.targets[layer])
+        frameBufferCube.bind(gl, layer)
+      } else {
+        uniforms["prevDepthTexture"]?.set(frameBufferCube.targets[layer-1])
+        frameBufferCube.bind(gl, layer-1)
+      }
+      gl.clear(GL.COLOR_BUFFER_BIT or GL.DEPTH_BUFFER_BIT)
+      uniforms["depthTexture"]?.set(frameBufferCube.targets[layer])
+      frameBufferCube.bind(gl, layer)
+      gameObjects.forEach { it.update() }
+      backgroundMesh.draw(camera)
+      gameObjects.drop(1).forEach{ it.draw(camera, *lights)
+      gl.clear(GL.COLOR_BUFFER_BIT or GL.DEPTH_BUFFER_BIT)
+      }
+    }
+
+    defaultFramebuffer.bind(gl)
 
     val spawn = ArrayList<GameObject>()
     val killList = ArrayList<GameObject>()    
